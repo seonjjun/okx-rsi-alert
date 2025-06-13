@@ -1,3 +1,5 @@
+# 구조 분석 자동화 시스템 v3.5 - 텔레그램 명령어 확장: /커플링 /분석 /시나리오
+
 import requests
 import pandas as pd
 import numpy as np
@@ -17,7 +19,6 @@ def send_telegram(message):
     print("📤 텔레그램 전송 내용:", message)
     response = requests.post(url, data=payload)
     print("📬 응답 상태:", response.status_code, response.text)
-
 
 # === OHLCV 데이터 가져오기 ===
 def fetch_candles(instId, timeframe):
@@ -132,20 +133,17 @@ def check_coupling():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    print("⚠️ 미분석 알림 도착\n데이터:", data)  # 👉 디버깅 로그 남기기
+    print("⚠️ 미분석 알림 도착\n데이터:", data)
 
     message = data.get("message", {}).get("text", "")
+
     if "/커플링" in message:
-        result = check_coupling()
+        return check_coupling()
     elif "/분석" in message:
-        result = analyze_structure()
+        return analyze_structure()
     elif "/시나리오" in message:
-        result = scenario_analysis()
-    else:
-        result = "pong"
-
-    return result  # ✅ 이 줄에서 상태코드를 따로 주지 말고 문자열만 리턴!
-
+        return scenario_analysis()
+    return "ok"
 
 # === 앱 실행 ===
 if __name__ == "__main__":
