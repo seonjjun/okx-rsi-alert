@@ -1,10 +1,14 @@
 import requests
 import pandas as pd
 import numpy as np
+import time
+from flask import Flask, request
 
 # === 설정 ===
 bot_token = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
 chat_id = "7541916016"
+
+app = Flask(__name__)
 
 # === 텔레그램 메시지 전송 ===
 def send_telegram(message):
@@ -14,7 +18,7 @@ def send_telegram(message):
 
 # === OHLCV 데이터 가져오기 ===
 def fetch_candles(instId, timeframe):
-    url = f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar={timeframe}&limit=100"
+    url = f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar={timeframe}&limit=50"
     res = requests.get(url)
     data = res.json()["data"]
     df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume","volumeCcy","volumeCcyQuote","confirm"])
@@ -56,56 +60,83 @@ def calc_indicators(df):
     df["OBV_MA"] = pd.Series(obv).rolling(14).mean()
     return df
 
-# === 시나리오 분석 ===
-def scenario_analysis(rsi_4h, obv_diff_4h, ema_position, volume_4h, avg_volume):
-    if rsi_4h > 75 and obv_diff_4h > 0:
-        return "과열 + 매집 정리 가능성 → 숏 시나리오 우세"
-    elif rsi_4h < 40 and obv_diff_4h > 0:
-        return "바닥 매집 감지 → 중장기 롱 가능성"
-    elif not ema_position and obv_diff_4h < 0:
-        return "지지 이탈 + 분산 조짐 → 구조 붕괴 시나리오"
-    elif volume_4h < avg_volume:
-        return "거래량 침체 → 추세 약화 / 정체 구간"
-    else:
-        return "애매한 구조 → 확실한 시그널 대기 필요"
-
-# === 실행 ===
-symbol = "VIRTUAL-USDT-SWAP"  # OKX 버추얼 심볼명
-
-df_15m = calc_indicators(fetch_candles(symbol, "15m"))
-df_1h = calc_indicators(fetch_candles(symbol, "1H"))
-df_4h = calc_indicators(fetch_candles(symbol, "4H"))
-
-last_15m = df_15m.iloc[-1]
-last_1h = df_1h.iloc[-1]
-last_4h = df_4h.iloc[-1]
-
-signal_triggered = (
-    last_15m["RSI"] >= 75 and
-    last_15m["StochRSI"] >= 0.95 and
-    last_15m["close"] >= last_15m["upper"] and
-    last_15m["vol_spike"] and
-    last_15m["OBV"] > last_15m["OBV_MA"]
-)
-
-scenario = scenario_analysis(
-    last_4h["RSI"],
-    last_4h["OBV"] - last_4h["OBV_MA"],
-    last_4h["close"] >= df_4h["ma20"].iloc[-1],
-    last_4h["volume"],
-    df_4h["volume"].rolling(20).mean().iloc[-1]
-)
-
-if signal_triggered:
-    msg = (
-        "\n🚨 구조 반전 시그널 감지! (15분봉 기준)\n\n"
-        f"[15분봉] RSI: {round(last_15m['RSI'],2)}, StochRSI: {round(last_15m['StochRSI'],2)}\n"
-        f"볼밴 상단 돌파: ✅ | 거래량 스파이크: ✅ | OBV 상승세: ✅\n\n"
-        f"[1시간봉] RSI: {round(last_1h['RSI'],2)} | OBV Δ: {round(last_1h['OBV'] - last_1h['OBV_MA'],2)}\n"
-        f"[4시간봉] RSI: {round(last_4h['RSI'],2)} | OBV Δ: {round(last_4h['OBV'] - last_4h['OBV_MA'],2)}\n"
-        f"시나리오: {scenario}"
+# === 구조 분석 ===
+def analyze_structure():
+    df_15m = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP", "15m"))
+    last = df_15m.iloc[-1]
+    signal_triggered = (
+        last["RSI"] >= 75 and
+        last["StochRSI"] >= 0.95 and
+        last["close"] >= last["upper"] and
+        last["vol_spike"] and
+        last["OBV"] > last["OBV_MA"]
     )
+    if signal_triggered:
+        msg = (
+            f"🚨 구조 반전 시그널 감지!\n"
+            f"RSI: {round(last['RSI'], 2)}\n"
+            f"StochRSI: {round(last['StochRSI'], 2)}\n"
+            f"볼밴 상단 돌파: ✅ | 거래량 스파이크: ✅ | OBV 상승세: ✅"
+        )
+    else:
+        msg = (
+            f"⭕ 조건 미충족\n"
+            f"RSI: {round(last['RSI'], 2)}\n"
+            f"StochRSI: {round(last['StochRSI'], 2)}\n"
+            f"볼밴 돌파: {last['close'] >= last['upper']}\n"
+            f"거래량 스파이크: {bool(last['vol_spike'])}\n"
+            f"OBV 상승세: {last['OBV'] > last['OBV_MA']}"
+        )
     send_telegram(msg)
-    print("✅ 조건 충족 - 텔레그램 전송 완료")
-else:
-    print("⭕ 조건 미충족 - 텔레그램 전송 생략")
+    return msg
+
+# === 시나리오 해석 ===
+def scenario_analysis():
+    df_4h = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP", "4H"))
+    last = df_4h.iloc[-1]
+    obv_diff = last["OBV"] - last["OBV_MA"]
+    ema_support = last["close"] >= df_4h["ma20"].iloc[-1]
+    volume_4h = last["volume"]
+    avg_volume = df_4h["volume"].rolling(20).mean().iloc[-1]
+
+    if last["RSI"] > 75 and obv_diff > 0:
+        result = "과열 + 매집 정리 가능성 → 숏 시나리오 우세"
+    elif last["RSI"] < 40 and obv_diff > 0:
+        result = "바닥 매집 감지 → 중장기 롱 가능성"
+    elif not ema_support and obv_diff < 0:
+        result = "지지 이탈 + 분산 조짐 → 구조 붕괴 시나리오"
+    elif volume_4h < avg_volume:
+        result = "거래량 침체 → 추세 약화 / 정체 구간"
+    else:
+        result = "애매한 구조 → 확실한 시그널 대기 필요"
+
+    send_telegram(f"📈 [4H 시나리오 분석]\n{result}")
+    return result
+
+# === 커플링 분석 함수 ===
+def check_coupling():
+    df_virtual = fetch_candles("VIRTUAL-USDT-SWAP", "15m")
+    df_btc = fetch_candles("BTC-USDT-SWAP", "15m")
+    df_eth = fetch_candles("ETH-USDT-SWAP", "15m")
+    corr_btc = df_virtual["close"].pct_change().corr(df_btc["close"].pct_change())
+    corr_eth = df_virtual["close"].pct_change().corr(df_eth["close"].pct_change())
+    msg = f"📊 커플링 지수\nBTC: {round(corr_btc, 2)}\nETH: {round(corr_eth, 2)}"
+    send_telegram(msg)
+    return msg
+
+# === 텔레그램 웹훅 엔드포인트 ===
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+    message = data.get("message", {}).get("text", "")
+    if "/커플링" in message:
+        return check_coupling(), 200
+    elif "/분석" in message:
+        return analyze_structure(), 200
+    elif "/시나리오" in message:
+        return scenario_analysis(), 200
+    return "pong", 200
+
+# === 앱 실행 ===
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
