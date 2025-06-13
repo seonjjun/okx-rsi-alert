@@ -91,6 +91,7 @@ def analyze_structure():
             f"OBV 상승세: {last['OBV'] > last['OBV_MA']}"
         )
     send_telegram(msg)
+    return msg
 
 # === 시나리오 해석 ===
 def scenario_analysis():
@@ -112,7 +113,9 @@ def scenario_analysis():
     else:
         result = "애매한 구조 → 확실한 시그널 대기 필요"
 
-    send_telegram(f"📈 [4H 시나리오 분석]\n{result}")
+    msg = f"📈 [4H 시나리오 분석]\n{result}"
+    send_telegram(msg)
+    return msg
 
 # === 커플링 분석 함수 ===
 def check_coupling():
@@ -123,6 +126,7 @@ def check_coupling():
     corr_eth = df_virtual["close"].pct_change().corr(df_eth["close"].pct_change())
     msg = f"📊 커플링 지수\nBTC: {round(corr_btc, 2)}\nETH: {round(corr_eth, 2)}"
     send_telegram(msg)
+    return msg
 
 # === 텔레그램 웹훅 엔드포인트 ===
 @app.route("/webhook", methods=["POST"])
@@ -130,11 +134,11 @@ def webhook():
     data = request.json
     message = data.get("message", {}).get("text", "")
     if "/커플링" in message:
-        check_coupling()
+        return check_coupling(), 200
     elif "/분석" in message:
-        analyze_structure()
+        return analyze_structure(), 200
     elif "/시나리오" in message:
-        scenario_analysis()
+        return scenario_analysis(), 200
     return "ok", 200
 
 # === 앱 실행 ===
