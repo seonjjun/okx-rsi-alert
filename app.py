@@ -1,5 +1,3 @@
-# 구조 분석 자동화 시스템 v3.5 - 텔레그램 명령어 확장: /커플링 /분석 /시나리오
-
 import requests
 import pandas as pd
 import numpy as np
