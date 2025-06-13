@@ -6,7 +6,7 @@ from flask import Flask, request
 
 # === 설정 ===
 bot_token = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
-chat_id = "7541916016"
+chat_id = 7541916016
 
 app = Flask(__name__)
 
