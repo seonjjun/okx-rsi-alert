@@ -14,7 +14,10 @@ app = Flask(__name__)
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message}
-    requests.post(url, data=payload)
+    print("📤 텔레그램 전송 내용:", message)
+    response = requests.post(url, data=payload)
+    print("📬 응답 상태:", response.status_code, response.text)
+
 
 # === OHLCV 데이터 가져오기 ===
 def fetch_candles(instId, timeframe):
