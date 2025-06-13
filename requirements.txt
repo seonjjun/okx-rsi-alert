@@ -1,1 +1,4 @@
-requirements.txt
+Flask
+requests
+pandas
+gunicorn
