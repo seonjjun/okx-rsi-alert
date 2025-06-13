@@ -132,14 +132,20 @@ def check_coupling():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
+    print("⚠️ 미분석 알림 도착\n데이터:", data)  # 👉 디버깅 로그 남기기
+
     message = data.get("message", {}).get("text", "")
     if "/커플링" in message:
-        return check_coupling(), 200
+        result = check_coupling()
     elif "/분석" in message:
-        return analyze_structure(), 200
+        result = analyze_structure()
     elif "/시나리오" in message:
-        return scenario_analysis(), 200
-    return "ok", 200
+        result = scenario_analysis()
+    else:
+        result = "pong"
+
+    return result  # ✅ 이 줄에서 상태코드를 따로 주지 말고 문자열만 리턴!
+
 
 # === 앱 실행 ===
 if __name__ == "__main__":
