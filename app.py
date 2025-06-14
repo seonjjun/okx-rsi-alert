@@ -1,87 +1,78 @@
-from flask import Flask, request
-import requests
+# ✅ app.py (Flask 텔레그램 자동 분석 시스템 with 커플링 기능 포함)
+import os
 import pandas as pd
-import json
-import time
-import ta
-import telegram
+import requests
+from flask import Flask, request
+from ta.momentum import RSIIndicator
+from telegram import Bot
 
 app = Flask(__name__)
 
-BOT_TOKEN = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
+# ✅ 성준의 텔레그램 정보
+TELEGRAM_TOKEN = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
 CHAT_ID = "7541916016"
+bot = Bot(token=TELEGRAM_TOKEN)
 
-# Cloudflare Workers 주소
-WORKER_BASE = "https://proud-silence-8c85.bvd012.workers.dev"
-
-def fetch_candles(symbol, interval="15m"):
+# ✅ OKX 캔들 데이터 요청 함수 (VIRTUAL, BTC, ETH)
+def fetch_candles(symbol):
+    url = f"https://proud-silence-8c85.bvd012.workers.dev?type=candles&symbol={symbol}"
     try:
-        url = f"{WORKER_BASE}?type=candles&symbol={symbol}&bar={interval}"
-        res = requests.get(url, timeout=10)
-        raw = res.json()["data"]
-        df = pd.DataFrame(raw, columns=[
-            "timestamp", "open", "high", "low", "close", "vol", "_", "quote_vol", "__"
+        response = requests.get(url)
+        data = response.json()
+        df = pd.DataFrame(data['data'], columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume', 'volume2', 'quoteVolume', 'confirm'
         ])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit='ms')
-        df.set_index("timestamp", inplace=True)
-        df = df.astype(float)
-        return df
+        df['close'] = pd.to_numeric(df['close'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+        return df.sort_values(by='timestamp')
     except Exception as e:
-        print("🔥 fetch_candles error:", e)
+        print(f"❌ Error fetching data: {e}")
         return pd.DataFrame()
 
+# ✅ RSI 계산 함수
 def calc_indicators(df):
     if df.empty:
-        print("⚠️ calc_indicators: 빈 데이터프레임 받음")
-        return df
-    df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=6).rsi()
-    df["obv"] = ta.volume.OnBalanceVolumeIndicator(df["close"], df["vol"]).on_balance_volume()
+        return None
+    df = df.copy()
+    df['rsi'] = RSIIndicator(df['close'], window=14).rsi()
     return df
 
-def check_coupling(v_df, btc_df, eth_df):
-    try:
-        v_close = v_df["close"].iloc[-5:].pct_change().fillna(0)
-        btc_close = btc_df["close"].iloc[-5:].pct_change().fillna(0)
-        eth_close = eth_df["close"].iloc[-5:].pct_change().fillna(0)
-        
-        corr_btc = v_close.corr(btc_close)
-        corr_eth = v_close.corr(eth_close)
-        
-        if corr_btc > corr_eth and corr_btc > 0.5:
-            return f"🔗 BTC 커플링: {corr_btc:.2f}"
-        elif corr_eth > 0.5:
-            return f"🔗 ETH 커플링: {corr_eth:.2f}"
-        else:
-            return "❓ 커플링 없음 또는 낮은 상관관계"
-    except Exception as e:
-        return f"❌ 커플링 계산 오류: {e}"
+# ✅ 커플링 분석 함수 (단순히 마지막 종가 움직임 동조 여부 확인)
+def check_coupling(df1, df2):
+    if df1.empty or df2.empty:
+        return "❌ 커플링 분석 실패: 데이터 부족"
+    change1 = df1['close'].iloc[-1] - df1['close'].iloc[-2]
+    change2 = df2['close'].iloc[-1] - df2['close'].iloc[-2]
+    same_direction = (change1 * change2) > 0
+    return "✅ 커플링 감지: 같은 방향" if same_direction else "⚠️ 커플링 없음"
 
-def analyze_structure():
-    v_df = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP"))
-    btc_df = fetch_candles("BTC-USDT-SWAP")
-    eth_df = fetch_candles("ETH-USDT-SWAP")
-
-    if v_df.empty:
-        return "❌ 구조 분석 실패: 데이터 수신 실패"
-    
-    latest = v_df.iloc[-1]
-    msg = f"""📊 구조 분석 결과
-
-💎 가격: {latest['close']:.4f}
-📉 RSI(6): {latest['rsi']:.2f}
-📈 OBV: {latest['obv']:,.0f}
-
-{check_coupling(v_df, btc_df, eth_df)}
-"""
-    return msg
-
-@app.route("/webhook", methods=["POST"])
+# ✅ /분석 명령 처리
+@app.route("/webhook", methods=['POST'])
 def webhook():
-    data = request.get_json()
-    text = data.get("message", {}).get("text", "")
-    if text == "/분석":
-        msg = analyze_structure()
-        bot = telegram.Bot(token=BOT_TOKEN)
-        bot.send_message(chat_id=CHAT_ID, text=msg)
-        return "ok"
-    return "ignored"
+    try:
+        payload = request.get_json()
+        if 'message' in payload and 'text' in payload['message']:
+            text = payload['message']['text']
+            if text.startswith("/분석"):
+                virtual = fetch_candles("VIRTUAL-USDT")
+                btc = fetch_candles("BTC-USDT")
+                eth = fetch_candles("ETH-USDT")
+
+                virtual = calc_indicators(virtual)
+
+                if virtual is None:
+                    bot.send_message(chat_id=CHAT_ID, text="❌ 구조 분석 실패: 데이터 수신 실패")
+                    return 'ok'
+
+                rsi = round(virtual['rsi'].iloc[-1], 2)
+                msg = f"📊 [VIRTUAL] RSI: {rsi}\n"
+                msg += check_coupling(virtual, btc) + " (BTC 기준)\n"
+                msg += check_coupling(virtual, eth) + " (ETH 기준)"
+
+                bot.send_message(chat_id=CHAT_ID, text=msg)
+        return 'ok'
+    except Exception as e:
+        print(f"🔥 분석 실패: {e}")
+        return 'error'
+
+# ❌ 절대 app.run() 넣지 말 것! Render는 gunicorn 사용함
