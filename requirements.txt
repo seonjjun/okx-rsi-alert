@@ -1,4 +1,6 @@
-Flask
-requests
+ta
 pandas
+requests
+flask
+python-telegram-bot
 gunicorn
