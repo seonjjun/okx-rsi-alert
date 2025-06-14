@@ -1,17 +1,26 @@
-# ✅ app.py (Flask 텔레그램 자동 분석 시스템 with 커플링 기능 포함)
 import os
 import pandas as pd
 import requests
 from flask import Flask, request
 from ta.momentum import RSIIndicator
-from telegram import Bot
 
 app = Flask(__name__)
 
 # ✅ 성준의 텔레그램 정보
 TELEGRAM_TOKEN = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
 CHAT_ID = "7541916016"
-bot = Bot(token=TELEGRAM_TOKEN)
+
+# ✅ 텔레그램 메시지 전송 함수
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text
+    }
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"❌ 텔레그램 전송 실패: {e}")
 
 # ✅ OKX 캔들 데이터 요청 함수 (VIRTUAL, BTC, ETH)
 def fetch_candles(symbol):
@@ -20,7 +29,8 @@ def fetch_candles(symbol):
         response = requests.get(url)
         data = response.json()
         df = pd.DataFrame(data['data'], columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume', 'volume2', 'quoteVolume', 'confirm'
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'volume2', 'quoteVolume', 'confirm'
         ])
         df['close'] = pd.to_numeric(df['close'])
         df['timestamp'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
@@ -37,7 +47,7 @@ def calc_indicators(df):
     df['rsi'] = RSIIndicator(df['close'], window=14).rsi()
     return df
 
-# ✅ 커플링 분석 함수 (단순히 마지막 종가 움직임 동조 여부 확인)
+# ✅ 커플링 분석 함수
 def check_coupling(df1, df2):
     if df1.empty or df2.empty:
         return "❌ 커플링 분석 실패: 데이터 부족"
@@ -46,7 +56,7 @@ def check_coupling(df1, df2):
     same_direction = (change1 * change2) > 0
     return "✅ 커플링 감지: 같은 방향" if same_direction else "⚠️ 커플링 없음"
 
-# ✅ /분석 명령 처리
+# ✅ 웹훅 분석 엔드포인트
 @app.route("/webhook", methods=['POST'])
 def webhook():
     try:
@@ -59,20 +69,18 @@ def webhook():
                 eth = fetch_candles("ETH-USDT")
 
                 virtual = calc_indicators(virtual)
-
                 if virtual is None:
-                    bot.send_message(chat_id=CHAT_ID, text="❌ 구조 분석 실패: 데이터 수신 실패")
+                    send_telegram("❌ 구조 분석 실패: 데이터 수신 실패")
                     return 'ok'
 
                 rsi = round(virtual['rsi'].iloc[-1], 2)
                 msg = f"📊 [VIRTUAL] RSI: {rsi}\n"
                 msg += check_coupling(virtual, btc) + " (BTC 기준)\n"
                 msg += check_coupling(virtual, eth) + " (ETH 기준)"
-
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram(msg)
         return 'ok'
     except Exception as e:
-        print(f"🔥 분석 실패: {e}")
+        error_msg = f"🔥 분석 중 오류 발생: {e}"
+        print(error_msg)
+        send_telegram(error_msg)
         return 'error'
-
-# ❌ 절대 app.run() 넣지 말 것! Render는 gunicorn 사용함
