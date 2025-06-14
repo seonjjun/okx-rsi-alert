@@ -21,22 +21,31 @@ def send_telegram(message):
 # === OHLCV 데이터 가져오기 ===
 def fetch_candles(instId, timeframe):
     url = f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar={timeframe}&limit=50"
-    res = requests.get(url)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers)
 
-    if res.status_code != 200:
-        print(f"❌ 요청 실패: {res.status_code} - {res.text}")
-        return pd.DataFrame()
-    
     try:
-        data = res.json().get("data", [])
-        if not data:
-            print("⚠️ 데이터가 비어있음:", res.text)
+        raw = res.json()
+
+        # ✅ OKX는 내부적으로 "code": "0"이 성공 기준
+        if raw.get("code") != "0":
+            print(f"❌ OKX 응답 오류: {raw}")
             return pd.DataFrame()
-        df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume","volumeCcy","volumeCcyQuote","confirm"])
+
+        data = raw.get("data", [])
+        if not data:
+            print("⚠️ 데이터가 비어있음:", raw)
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data, columns=[
+            "timestamp", "open", "high", "low", "close",
+            "volume", "volumeCcy", "volumeCcyQuote", "confirm"
+        ])
         df = df.iloc[::-1]
         df["close"] = df["close"].astype(float)
         df["volume"] = df["volume"].astype(float)
         return df
+
     except Exception as e:
         print("❌ JSON 파싱 에러:", str(e), res.text)
         return pd.DataFrame()
