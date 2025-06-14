@@ -1,187 +1,87 @@
+from flask import Flask, request
 import requests
 import pandas as pd
-import numpy as np
+import json
 import time
-from flask import Flask, request
-
-# === 설정 ===
-bot_token = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
-chat_id = 7541916016
+import ta
+import telegram
 
 app = Flask(__name__)
 
-# === 텔레그램 메시지 전송 ===
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message}
-    print("📤 텔레그램 전송 내용:", message)
-    response = requests.post(url, data=payload)
-    print("📬 응답 상태:", response.status_code, response.text)
+BOT_TOKEN = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
+CHAT_ID = "7541916016"
 
-# === OHLCV 데이터 가져오기 ===
-def fetch_candles(instId, timeframe):
-    url = f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar={timeframe}&limit=50"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
+# Cloudflare Workers 주소
+WORKER_BASE = "https://proud-silence-8c85.bvd012.workers.dev"
 
+def fetch_candles(symbol, interval="15m"):
     try:
-        raw = res.json()
-
-        # ✅ OKX는 내부적으로 "code": "0"이 성공 기준
-        if raw.get("code") != "0":
-            print(f"❌ OKX 응답 오류: {raw}")
-            return pd.DataFrame()
-
-        data = raw.get("data", [])
-        if not data:
-            print("⚠️ 데이터가 비어있음:", raw)
-            return pd.DataFrame()
-
-        df = pd.DataFrame(data, columns=[
-            "timestamp", "open", "high", "low", "close",
-            "volume", "volumeCcy", "volumeCcyQuote", "confirm"
+        url = f"{WORKER_BASE}?type=candles&symbol={symbol}&bar={interval}"
+        res = requests.get(url, timeout=10)
+        raw = res.json()["data"]
+        df = pd.DataFrame(raw, columns=[
+            "timestamp", "open", "high", "low", "close", "vol", "_", "quote_vol", "__"
         ])
-        df = df.iloc[::-1]
-        df["close"] = df["close"].astype(float)
-        df["volume"] = df["volume"].astype(float)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit='ms')
+        df.set_index("timestamp", inplace=True)
+        df = df.astype(float)
         return df
-
     except Exception as e:
-        print("❌ JSON 파싱 에러:", str(e), res.text)
+        print("🔥 fetch_candles error:", e)
         return pd.DataFrame()
 
-# === 인디케이터 계산 ===
 def calc_indicators(df):
     if df.empty:
         print("⚠️ calc_indicators: 빈 데이터프레임 받음")
         return df
-
-    delta = df["close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss
-    df["RSI"] = 100 - (100 / (1 + rs))
-
-    min_rsi = df["RSI"].rolling(14).min()
-    max_rsi = df["RSI"].rolling(14).max()
-    df["StochRSI"] = (df["RSI"] - min_rsi) / (max_rsi - min_rsi)
-
-    df["ma20"] = df["close"].rolling(20).mean()
-    df["stddev"] = df["close"].rolling(20).std()
-    df["upper"] = df["ma20"] + 2 * df["stddev"]
-
-    df["vol_avg5"] = df["volume"].rolling(5).mean()
-    df["vol_spike"] = df["volume"] > df["vol_avg5"] * 1.3
-
-    obv = [0]
-    for i in range(1, len(df)):
-        if df["close"][i] > df["close"][i - 1]:
-            obv.append(obv[-1] + df["volume"][i])
-        elif df["close"][i] < df["close"][i - 1]:
-            obv.append(obv[-1] - df["volume"][i])
-        else:
-            obv.append(obv[-1])
-    df["OBV"] = obv
-    df["OBV_MA"] = pd.Series(obv).rolling(14).mean()
+    df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=6).rsi()
+    df["obv"] = ta.volume.OnBalanceVolumeIndicator(df["close"], df["vol"]).on_balance_volume()
     return df
 
-# === 구조 분석 ===
+def check_coupling(v_df, btc_df, eth_df):
+    try:
+        v_close = v_df["close"].iloc[-5:].pct_change().fillna(0)
+        btc_close = btc_df["close"].iloc[-5:].pct_change().fillna(0)
+        eth_close = eth_df["close"].iloc[-5:].pct_change().fillna(0)
+        
+        corr_btc = v_close.corr(btc_close)
+        corr_eth = v_close.corr(eth_close)
+        
+        if corr_btc > corr_eth and corr_btc > 0.5:
+            return f"🔗 BTC 커플링: {corr_btc:.2f}"
+        elif corr_eth > 0.5:
+            return f"🔗 ETH 커플링: {corr_eth:.2f}"
+        else:
+            return "❓ 커플링 없음 또는 낮은 상관관계"
+    except Exception as e:
+        return f"❌ 커플링 계산 오류: {e}"
+
 def analyze_structure():
-    df_15m_raw = fetch_candles("VIRTUAL-USDT-SWAP", "15m")
-    df_15m = calc_indicators(df_15m_raw)
-    if df_15m.empty:
-        send_telegram("❌ 구조 분석 실패: 데이터 수신 실패")
-        return "분석 실패"
+    v_df = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP"))
+    btc_df = fetch_candles("BTC-USDT-SWAP")
+    eth_df = fetch_candles("ETH-USDT-SWAP")
 
-    last = df_15m.iloc[-1]
-    signal_triggered = (
-        last["RSI"] >= 75 and
-        last["StochRSI"] >= 0.95 and
-        last["close"] >= last["upper"] and
-        last["vol_spike"] and
-        last["OBV"] > last["OBV_MA"]
-    )
-    if signal_triggered:
-        msg = (
-            f"🚨 구조 반전 시그널 감지!\n"
-            f"RSI: {round(last['RSI'], 2)}\n"
-            f"StochRSI: {round(last['StochRSI'], 2)}\n"
-            f"볼밴 상단 돌파: ✅ | 거래량 스파이크: ✅ | OBV 상승세: ✅"
-        )
-    else:
-        msg = (
-            f"⭕ 조건 미충족\n"
-            f"RSI: {round(last['RSI'], 2)}\n"
-            f"StochRSI: {round(last['StochRSI'], 2)}\n"
-            f"볼밴 돌파: {last['close'] >= last['upper']}\n"
-            f"거래량 스파이크: {bool(last['vol_spike'])}\n"
-            f"OBV 상승세: {last['OBV'] > last['OBV_MA']}"
-        )
-    send_telegram(msg)
+    if v_df.empty:
+        return "❌ 구조 분석 실패: 데이터 수신 실패"
+    
+    latest = v_df.iloc[-1]
+    msg = f"""📊 구조 분석 결과
+
+💎 가격: {latest['close']:.4f}
+📉 RSI(6): {latest['rsi']:.2f}
+📈 OBV: {latest['obv']:,.0f}
+
+{check_coupling(v_df, btc_df, eth_df)}
+"""
     return msg
 
-# === 시나리오 해석 ===
-def scenario_analysis():
-    df_4h_raw = fetch_candles("VIRTUAL-USDT-SWAP", "4H")
-    df_4h = calc_indicators(df_4h_raw)
-    if df_4h.empty:
-        send_telegram("❌ 시나리오 분석 실패: 데이터 수신 실패")
-        return "시나리오 실패"
-
-    last = df_4h.iloc[-1]
-    obv_diff = last["OBV"] - last["OBV_MA"]
-    ema_support = last["close"] >= df_4h["ma20"].iloc[-1]
-    volume_4h = last["volume"]
-    avg_volume = df_4h["volume"].rolling(20).mean().iloc[-1]
-
-    if last["RSI"] > 75 and obv_diff > 0:
-        result = "과열 + 매집 정리 가능성 → 숏 시나리오 우세"
-    elif last["RSI"] < 40 and obv_diff > 0:
-        result = "바닥 매집 감지 → 중장기 롱 가능성"
-    elif not ema_support and obv_diff < 0:
-        result = "지지 이탈 + 분산 조짐 → 구조 붕괴 시나리오"
-    elif volume_4h < avg_volume:
-        result = "거래량 침체 → 추세 약화 / 정체 구간"
-    else:
-        result = "애매한 구조 → 확실한 시그널 대기 필요"
-
-    msg = f"📈 [4H 시나리오 분석]\n{result}"
-    send_telegram(msg)
-    return msg
-
-# === 커플링 분석 함수 ===
-def check_coupling():
-    df_virtual = fetch_candles("VIRTUAL-USDT-SWAP", "15m")
-    df_btc = fetch_candles("BTC-USDT-SWAP", "15m")
-    df_eth = fetch_candles("ETH-USDT-SWAP", "15m")
-    if df_virtual.empty or df_btc.empty or df_eth.empty:
-        send_telegram("❌ 커플링 분석 실패: 데이터 수신 실패")
-        return "커플링 실패"
-
-    corr_btc = df_virtual["close"].pct_change().corr(df_btc["close"].pct_change())
-    corr_eth = df_virtual["close"].pct_change().corr(df_eth["close"].pct_change())
-    msg = f"📊 커플링 지수\nBTC: {round(corr_btc, 2)}\nETH: {round(corr_eth, 2)}"
-    send_telegram(msg)
-    return msg
-
-# === 텔레그램 웹훅 엔드포인트 ===
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    print("⚠️ 미분석 알림 도착\n데이터:", data)
-
-    message = data.get("message", {}).get("text", "")
-
-    if "/커플링" in message:
-        check_coupling()
-    elif "/분석" in message:
-        analyze_structure()
-    elif "/시나리오" in message:
-        scenario_analysis()
-    return "✅ 명령어 처리 완료", 200
-
-# === 앱 실행 ===
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    data = request.get_json()
+    text = data.get("message", {}).get("text", "")
+    if text == "/분석":
+        msg = analyze_structure()
+        bot = telegram.Bot(token=BOT_TOKEN)
+        bot.send_message(chat_id=CHAT_ID, text=msg)
+        return "ok"
+    return "ignored"
