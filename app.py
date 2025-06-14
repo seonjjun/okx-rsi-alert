@@ -76,6 +76,23 @@ def webhook():
                 obv = round(virtual['obv'].iloc[-1], 2)
                 vol = round(virtual['volume'].iloc[-1], 2)
                 msg = f"📊 [VIRTUAL 분석]\nRSI: {rsi}\nStoch %K: {stoch_k}, %D: {stoch_d}\nOBV: {obv}\n거래량: {vol}"
+
+                # 조건 분석
+                conditions = []
+                if rsi > 75:
+                    conditions.append("🔥 RSI 과열 상태")
+                if stoch_k < 20 and stoch_d < 20:
+                    conditions.append("📉 Stoch 쌍바닥 가능성")
+                if vol > virtual['volume'].iloc[-6:-1].mean() * 1.3:
+                    conditions.append("💥 거래량 급증 포착")
+                if obv > virtual['obv'].iloc[-2]:
+                    conditions.append("🔼 OBV 상승 시작")
+
+                if conditions:
+                    msg += "\n\n🔍 조건 감지:\n" + "\n".join(conditions)
+                else:
+                    msg += "\n\n😶 특이 조건 없음"
+
                 send_telegram_message(msg)
 
             elif text.startswith("/커플링"):
