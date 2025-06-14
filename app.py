@@ -22,15 +22,31 @@ def send_telegram(message):
 def fetch_candles(instId, timeframe):
     url = f"https://www.okx.com/api/v5/market/candles?instId={instId}&bar={timeframe}&limit=50"
     res = requests.get(url)
-    data = res.json()["data"]
-    df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume","volumeCcy","volumeCcyQuote","confirm"])
-    df = df.iloc[::-1]
-    df["close"] = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
-    return df
+
+    if res.status_code != 200:
+        print(f"❌ 요청 실패: {res.status_code} - {res.text}")
+        return pd.DataFrame()
+    
+    try:
+        data = res.json().get("data", [])
+        if not data:
+            print("⚠️ 데이터가 비어있음:", res.text)
+            return pd.DataFrame()
+        df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume","volumeCcy","volumeCcyQuote","confirm"])
+        df = df.iloc[::-1]
+        df["close"] = df["close"].astype(float)
+        df["volume"] = df["volume"].astype(float)
+        return df
+    except Exception as e:
+        print("❌ JSON 파싱 에러:", str(e), res.text)
+        return pd.DataFrame()
 
 # === 인디케이터 계산 ===
 def calc_indicators(df):
+    if df.empty:
+        print("⚠️ calc_indicators: 빈 데이터프레임 받음")
+        return df
+
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -64,7 +80,12 @@ def calc_indicators(df):
 
 # === 구조 분석 ===
 def analyze_structure():
-    df_15m = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP", "15m"))
+    df_15m_raw = fetch_candles("VIRTUAL-USDT-SWAP", "15m")
+    df_15m = calc_indicators(df_15m_raw)
+    if df_15m.empty:
+        send_telegram("❌ 구조 분석 실패: 데이터 수신 실패")
+        return "분석 실패"
+
     last = df_15m.iloc[-1]
     signal_triggered = (
         last["RSI"] >= 75 and
@@ -94,7 +115,12 @@ def analyze_structure():
 
 # === 시나리오 해석 ===
 def scenario_analysis():
-    df_4h = calc_indicators(fetch_candles("VIRTUAL-USDT-SWAP", "4H"))
+    df_4h_raw = fetch_candles("VIRTUAL-USDT-SWAP", "4H")
+    df_4h = calc_indicators(df_4h_raw)
+    if df_4h.empty:
+        send_telegram("❌ 시나리오 분석 실패: 데이터 수신 실패")
+        return "시나리오 실패"
+
     last = df_4h.iloc[-1]
     obv_diff = last["OBV"] - last["OBV_MA"]
     ema_support = last["close"] >= df_4h["ma20"].iloc[-1]
@@ -121,6 +147,10 @@ def check_coupling():
     df_virtual = fetch_candles("VIRTUAL-USDT-SWAP", "15m")
     df_btc = fetch_candles("BTC-USDT-SWAP", "15m")
     df_eth = fetch_candles("ETH-USDT-SWAP", "15m")
+    if df_virtual.empty or df_btc.empty or df_eth.empty:
+        send_telegram("❌ 커플링 분석 실패: 데이터 수신 실패")
+        return "커플링 실패"
+
     corr_btc = df_virtual["close"].pct_change().corr(df_btc["close"].pct_change())
     corr_eth = df_virtual["close"].pct_change().corr(df_eth["close"].pct_change())
     msg = f"📊 커플링 지수\nBTC: {round(corr_btc, 2)}\nETH: {round(corr_eth, 2)}"
@@ -142,7 +172,7 @@ def webhook():
     elif "/시나리오" in message:
         scenario_analysis()
     return "✅ 명령어 처리 완료", 200
-    
+
 # === 앱 실행 ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
