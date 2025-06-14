@@ -136,13 +136,13 @@ def webhook():
     message = data.get("message", {}).get("text", "")
 
     if "/커플링" in message:
-        return check_coupling()
+        check_coupling()
     elif "/분석" in message:
-        return analyze_structure()
+        analyze_structure()
     elif "/시나리오" in message:
-        return scenario_analysis()
-    return "ok"
-
+        scenario_analysis()
+    return "✅ 명령어 처리 완료", 200
+    
 # === 앱 실행 ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
