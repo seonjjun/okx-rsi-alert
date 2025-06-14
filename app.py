@@ -4,14 +4,21 @@ import requests
 from flask import Flask, request
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.volume import OnBalanceVolumeIndicator
-from telegram import Bot
 
 app = Flask(__name__)
 
 # ✅ 성준의 텔레그램 정보
 TELEGRAM_TOKEN = "8170134694:AAF9WM10B9A9LvmfAPe26WoRse1oMUGwECI"
 CHAT_ID = "7541916016"
-bot = Bot(token=TELEGRAM_TOKEN)
+
+# ✅ 텔레그램 메시지 전송 함수
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": text}
+    try:
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"❌ 텔레그램 전송 실패: {e}")
 
 # ✅ OKX 캔들 데이터 요청 함수
 def fetch_candles(symbol):
@@ -61,7 +68,7 @@ def webhook():
             if text.startswith("/분석"):
                 virtual = calc_indicators(fetch_candles("VIRTUAL-USDT"))
                 if virtual is None:
-                    bot.send_message(chat_id=CHAT_ID, text="❌ 구조 분석 실패: 데이터 수신 실패")
+                    send_telegram_message("❌ 구조 분석 실패: 데이터 수신 실패")
                     return 'ok'
                 rsi = round(virtual['rsi'].iloc[-1], 2)
                 stoch_k = round(virtual['stoch_k'].iloc[-1], 2)
@@ -69,42 +76,42 @@ def webhook():
                 obv = round(virtual['obv'].iloc[-1], 2)
                 vol = round(virtual['volume'].iloc[-1], 2)
                 msg = f"📊 [VIRTUAL 분석]\nRSI: {rsi}\nStoch %K: {stoch_k}, %D: {stoch_d}\nOBV: {obv}\n거래량: {vol}"
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram_message(msg)
 
             elif text.startswith("/커플링"):
                 v = fetch_candles("VIRTUAL-USDT")
                 b = fetch_candles("BTC-USDT")
                 e = fetch_candles("ETH-USDT")
                 msg = f"📡 커플링 분석 결과\n{check_coupling(v, b)} (BTC 기준)\n{check_coupling(v, e)} (ETH 기준)"
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram_message(msg)
 
             elif text.startswith("/롱"):
                 v = calc_indicators(fetch_candles("VIRTUAL-USDT"))
                 if v is None:
-                    bot.send_message(chat_id=CHAT_ID, text="❌ 롱 분석 실패: 데이터 없음")
+                    send_telegram_message("❌ 롱 분석 실패: 데이터 없음")
                     return 'ok'
                 rsi = v['rsi'].iloc[-1]
                 k = v['stoch_k'].iloc[-1]
                 d = v['stoch_d'].iloc[-1]
                 signal = "✅ 롱 진입 시그널" if rsi > 50 and k > d and k < 80 else "❌ 롱 진입 신호 약함"
                 msg = f"📈 [롱 전략]\nRSI: {round(rsi,2)}, Stoch K: {round(k,2)}, D: {round(d,2)}\n→ {signal}"
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram_message(msg)
 
             elif text.startswith("/숏"):
                 v = calc_indicators(fetch_candles("VIRTUAL-USDT"))
                 if v is None:
-                    bot.send_message(chat_id=CHAT_ID, text="❌ 숏 분석 실패: 데이터 없음")
+                    send_telegram_message("❌ 숏 분석 실패: 데이터 없음")
                     return 'ok'
                 rsi = v['rsi'].iloc[-1]
                 k = v['stoch_k'].iloc[-1]
                 d = v['stoch_d'].iloc[-1]
                 signal = "✅ 숏 진입 시그널" if rsi < 50 and k < d and k > 20 else "❌ 숏 진입 신호 약함"
                 msg = f"📉 [숏 전략]\nRSI: {round(rsi,2)}, Stoch K: {round(k,2)}, D: {round(d,2)}\n→ {signal}"
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram_message(msg)
 
             elif text.startswith("/시나리오"):
                 msg = "🧠 시나리오 예시\n1. RSI 30이하 + Stoch 쌍바닥: 반등 시나리오\n2. RSI 70이상 + Stoch 역전: 하락 시나리오\n3. 거래량 급증 + OBV 상승: 매집 시나리오"
-                bot.send_message(chat_id=CHAT_ID, text=msg)
+                send_telegram_message(msg)
         return 'ok'
     except Exception as e:
         print(f"🔥 분석 실패: {e}")
