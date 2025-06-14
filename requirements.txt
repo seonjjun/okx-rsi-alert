@@ -1,6 +1,6 @@
-ta
-pandas
-requests
 flask
+requests
+pandas
+ta
 python-telegram-bot
 gunicorn
