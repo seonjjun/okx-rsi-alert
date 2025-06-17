@@ -20,8 +20,10 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ 텔레그램 전송 실패: {e}")
 
-# ✅ 유사분석 API 호출 함수
+# ✅ 유사분석 API 호출 함수 (NaN 제거 포함)
 def run_similarity_analysis(df):
+    df = df.dropna()  # ✅ NaN 포함된 행 제거
+
     payload = {
         "close": df['close'].tolist(),
         "volume": df['volume'].tolist(),
@@ -96,8 +98,9 @@ def webhook():
                 if virtual is None:
                     send_telegram_message("❌ 구조 분석 실패: 데이터 수신 실패")
                     return 'ok'
+                virtual = virtual.dropna()  # ✅ NaN 제거 추가
                 rsi = round(virtual['rsi'].iloc[-1], 2)
-                stoch_k = round(virtual['st'].iloc[-1], 2)
+                stoch_k = round(virtual['stoch_k'].iloc[-1], 2)
                 stoch_d = round(virtual['stoch_d'].iloc[-1], 2)
                 obv = round(virtual['obv'].iloc[-1], 2)
                 vol = round(virtual['volume'].iloc[-1], 2)
@@ -131,6 +134,7 @@ def webhook():
                 if v is None:
                     send_telegram_message("❌ 유사분석 실패: 데이터 없음")
                     return 'ok'
+                v = v.dropna()  # ✅ NaN 제거 추가
                 send_telegram_message(f"📡 [유사분석 - {interval}봉] 실행 중...")
                 run_similarity_analysis(v)
 
@@ -146,6 +150,7 @@ def webhook():
                 if v is None:
                     send_telegram_message("❌ 롱 분석 실패: 데이터 없음")
                     return 'ok'
+                v = v.dropna()
                 rsi = v['rsi'].iloc[-1]
                 k = v['stoch_k'].iloc[-1]
                 d = v['stoch_d'].iloc[-1]
@@ -158,6 +163,7 @@ def webhook():
                 if v is None:
                     send_telegram_message("❌ 숏 분석 실패: 데이터 없음")
                     return 'ok'
+                v = v.dropna()
                 rsi = v['rsi'].iloc[-1]
                 k = v['stoch_k'].iloc[-1]
                 d = v['stoch_d'].iloc[-1]
