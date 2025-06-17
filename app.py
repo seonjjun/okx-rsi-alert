@@ -20,6 +20,25 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ 텔레그램 전송 실패: {e}")
 
+# ✅ 유사분석 API 호출 함수
+def run_similarity_analysis(df):
+    payload = {
+        "close": df['close'].tolist(),
+        "volume": df['volume'].tolist(),
+        "rsi": df['rsi'].tolist(),
+        "stoch": df['stoch_k'].tolist(),
+        "obv": df['obv'].tolist()
+    }
+    try:
+        res = requests.post("https://twoseo.onrender.com/analyze", json=payload)
+        if res.status_code == 200:
+            result = res.json()
+            send_telegram_message(f"🧠 유사 분석 결과:\n{result}")
+        else:
+            send_telegram_message("❌ 유사분석 실패: 서버 오류")
+    except Exception as e:
+        send_telegram_message(f"❌ 유사분석 요청 실패: {e}")
+
 # ✅ OKX 캔들 데이터 요청 함수 (봉 단위 추가)
 def fetch_candles(symbol, interval="5m"):
     url = f"https://proud-silence-8c85.bvd012.workers.dev?type=candles&symbol={symbol}&interval={interval}"
@@ -78,7 +97,7 @@ def webhook():
                     send_telegram_message("❌ 구조 분석 실패: 데이터 수신 실패")
                     return 'ok'
                 rsi = round(virtual['rsi'].iloc[-1], 2)
-                stoch_k = round(virtual['stoch_k'].iloc[-1], 2)
+                stoch_k = round(virtual['st'].iloc[-1], 2)
                 stoch_d = round(virtual['stoch_d'].iloc[-1], 2)
                 obv = round(virtual['obv'].iloc[-1], 2)
                 vol = round(virtual['volume'].iloc[-1], 2)
@@ -97,10 +116,23 @@ def webhook():
 
                 if conditions:
                     msg += "\n\n🔍 조건 감지:\n" + "\n".join(conditions)
+                    send_telegram_message(msg)
+                    run_similarity_analysis(virtual)
                 else:
                     msg += "\n\n😶 특이 조건 없음"
+                    send_telegram_message(msg)
 
-                send_telegram_message(msg)
+            elif text.startswith("/유사분석"):
+                interval = "5m"
+                for keyword in ["1h", "4h", "15m", "5m"]:
+                    if keyword in text:
+                        interval = keyword
+                v = calc_indicators(fetch_candles("VIRTUAL-USDT", interval))
+                if v is None:
+                    send_telegram_message("❌ 유사분석 실패: 데이터 없음")
+                    return 'ok'
+                send_telegram_message(f"📡 [유사분석 - {interval}봉] 실행 중...")
+                run_similarity_analysis(v)
 
             elif text.startswith("/커플링"):
                 v = fetch_candles("VIRTUAL-USDT", interval)
